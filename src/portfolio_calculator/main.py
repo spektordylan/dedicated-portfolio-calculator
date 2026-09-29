@@ -28,7 +28,7 @@ while not output_successful:
 
         while not bond_prices_read:
             try:
-                bond_prices = pd.read_csv(bond_prices_input)
+                bond_prices = pd.read_csv(bond_prices_input, header=None)
                 bond_prices_read = True
             except:
                 print("Error reading bond prices file. Please re-enter the path to the csv file.")
