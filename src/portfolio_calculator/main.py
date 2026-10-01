@@ -45,6 +45,17 @@ while not output_successful:
                 print("Error reading cash flows file. Please re-enter the path to the csv file.")
                 cash_flows_input = input("Specify cash flows path (csv): ")
 
+        cash_flow_dates_parsed = False
+
+        while not cash_flow_dates_parsed:
+            try:
+                cash_flows = pd.read_csv(cash_flows_input)
+                cash_flows['dates'] = pd.to_datetime(cash_flows['dates'])
+                cash_flow_dates_parsed = True
+            except:
+                print("Error parsing cash flow dates. Please ensure the 'dates' column contains dates of a valid format.")
+                cash_flows_input = input("Specify cash flows path (csv): ")
+
         output_path = input("Specify output path (csv): ")
 
         calculator = Calculator(settlement_date, bond_prices, cash_flows)
