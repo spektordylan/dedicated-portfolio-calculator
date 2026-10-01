@@ -1,0 +1,11 @@
+README.md
+pyproject.toml
+src/dedicated_portfolio_calculator.egg-info/PKG-INFO
+src/dedicated_portfolio_calculator.egg-info/SOURCES.txt
+src/dedicated_portfolio_calculator.egg-info/dependency_links.txt
+src/dedicated_portfolio_calculator.egg-info/entry_points.txt
+src/dedicated_portfolio_calculator.egg-info/requires.txt
+src/dedicated_portfolio_calculator.egg-info/top_level.txt
+src/portfolio_calculator/__init__.py
+src/portfolio_calculator/calculator.py
+src/portfolio_calculator/main.py

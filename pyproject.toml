@@ -12,10 +12,11 @@ dependencies = [
     "numpy",
     "pandas",
     "scipy",
+    "QuantLib-Python",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [project.scripts]
-portfolio-calculator = "dedicated_portfolio.main:main"
+portfolio-calculator = "portfolio_calculator.main:main"
