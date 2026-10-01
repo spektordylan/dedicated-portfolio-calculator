@@ -17,6 +17,8 @@ class Calculator:
         self.bond_prices = bond_prices
         self.cash_flows = cash_flows
 
+        self.ql_settlement_date = ql.Date(settlement_date.day, settlement_date.month, settlement_date.year)
+
     def construct_portfolio(self):
         """
         Method for constructing the optimal portfolio called by the user script in main.py. 
@@ -31,6 +33,7 @@ class Calculator:
 
         bond_data_with_dirty_prices = self.__calculate_dirty_bond_prices(clean_bond_price_data)
 
+        bond_data_with_matched_cash_flows = self.__find_and_match_cash_flows(bond_data_with_dirty_prices)
 
     def __clean_bond_price_data(self):
         """
@@ -54,6 +57,24 @@ class Calculator:
         return filtered_bond_prices.dropna()
 
 
+    def __clean_cash_flow_data(self):
+        """
+        Private method for cleaning the cash flows DataFrame. This method is called by construct_portfolio().
+        
+        Returns:
+            cleaned_cash_flows (pd.DataFrame)
+        """
+        cash_flows = self.cash_flows.copy()
+
+        cash_flows.columns = ['dates', 'cfs']
+
+        # filter to cash flow dates after settlement date only, 
+        # not possible to satisfy cash flow requirements before settlement date
+        filtered_cash_flows = cash_flows.query('dates >= @self.settlement_date')
+
+        return filtered_cash_flows.dropna()
+
+
     def __calculate_dirty_bond_prices(self, clean_bond_prices):
         """
         Private method for converting clean bond price data into dirty prices. This method is called by construct_portfolio().
@@ -63,27 +84,24 @@ class Calculator:
             dirty_bond_prices (pd.DataFrame)
                 Dataframe with new Dirty_Price column
         """
+        ql_settlement_date = self.ql_settlement_date
+
         dirty_prices = []
-
-        settlement_date = self.settlement_date
-        ql_settlement_date = ql.Date(settlement_date.day, settlement_date.month, settlement_date.year)
         
-        for bond in clean_bond_prices:
-            security_type = bond['Security_Type']
-
-            if security_type == "MARKET BASED BILL":
+        for bond in clean_bond_prices.itertuples():
+            if bond.Security_Type == "MARKET BASED BILL":
                 dirty_prices.append(bond['Buy'])
                 continue
 
-            clean_price = bond['Buy']
-            maturity_date = bond['Maturity Date']
+            clean_price = bond.Buy
+            maturity_date = bond.Maturity_Date
             ql_maturity_date = ql.Date(maturity_date.day, maturity_date.month, maturity_date.year)
 
-            schedule = ql.Schedule(ql_settlement_date, ql_maturity_date, ql.Period(ql.Semiannual), ql.NullCalendar(), 
+            schedule = ql.Schedule(ql_settlement_date - ql.Period(ql.Semiannual), ql_maturity_date, ql.Period(ql.Semiannual), ql.NullCalendar(), 
                                    ql.Unadjusted, ql.Unadjusted, ql.DateGeneration.Backward, 
                                    ql.date.isEndOfMonth(ql_maturity_date))
 
-            rate = bond['Rate']
+            rate = bond.Rate
 
             ql_bond = ql.FixedRateBond(0, 100.0, schedule, [rate], ql.ActualActual(ql.ActualActual.Bond, schedule))
 
@@ -91,27 +109,62 @@ class Calculator:
             dirty_prices.append(accrued_interest + clean_price)
 
         return clean_bond_prices.assign(Dirty_Price=dirty_prices)
-"""
 
-def bondCashFlows(settlementDate: date, maturityDate: date, couponRate: float, principal: float = 100) -> Tuple[List[date], List[float]]:
-    
-    Calculate the cash flows for a treasury note or bond.
+    def __find_and_match_cash_flows(self, bond_data_with_dirty_prices):
+        """
+        Private method for finding cash flows for each method and matching with cash flow constraints. This method is called by construct_portfolio().
+        
+        Returns:
+            bond_data_with_cash_flows (pd.DataFrame)
+                Dataframe with new Matched_Cash_Flows column
+        """
+        bond_data = bond_data_with_dirty_prices.copy()
+        ql_settlement_date = self.ql_settlement_date
 
-    Returns a tuple of two lists. The first list is the dates of the cash flows, and the second list is the cash flow amounts. 
-    The cash flow amounts are for $100 of principal.
-    
+        cash_flows = self.__clean_cash_flow_data()
 
-    previous_coupon_date = __previous_coupon_date(settlementDate, maturityDate)
-    next_coupon_date = __move_months(previous_coupon_date, 6)
+        num_cf_reqs = cash_flows.shape[0]
 
-    cashFlows = []
-    cashFlowDates = []
+        bond_data['Matched_Cash_Flows'] = [0] * num_cf_reqs
 
-    while next_coupon_date <= maturityDate:
-        cashFlows.append(couponRate / 2 * principal)
-        cashFlowDates.append(next_coupon_date)
-        next_coupon_date = __move_months(next_coupon_date, 6)
+        for bond in bond_data.itertuples():
+            if bond.Security_Type == "MARKET BASED BILL":
+                for i, cash_flow_req in cash_flows.iterrows():
+                    if bond.Maturity_Date <= cash_flow_req['dates']:
+                        bond.Matched_Cash_Flows[i] = bond.Dirty_Price
+                        break
+            else:
+                ql_maturity_date = ql.Date(bond.Maturity_Date.day, bond.Maturity_Date.month, bond.Maturity_Date.year)
 
-    cashFlows[-1] += principal
+                # this time, need to keep track of weekends and holidays
+                calendar = ql.UnitedStates(ql.UnitedStates.GovernmentBond) 
 
-    return cashFlowDates, cashFlows"""
+                schedule = ql.Schedule(ql_settlement_date - ql.Period(ql.Semiannual), 
+                                       ql_maturity_date, 
+                                       ql.Period(ql.Semiannual), 
+                                       calendar, 
+                                       ql.Unadjusted, ql.Unadjusted, ql.DateGeneration.Backward, 
+                                       ql.date.isEndOfMonth(ql_maturity_date))
+
+                rate = bond.Rate
+
+                ql_bond = ql.FixedRateBond(0, 100.0, schedule, [rate], ql.ActualActual(ql.ActualActual.Bond, schedule))
+
+                # quantlib is confusing, just gonna filter cashflows after settlement just in case
+                # should have cleaner solution in future, but for now this works
+                bond_cashflows = ql_bond.cashflows()
+                start_index = 0
+
+                for cash_flow in bond_cashflows:
+                    if cash_flow.date() <= ql_settlement_date:
+                        start_index += 1
+                    else:
+                        break
+
+                for cash_flow in bond_cashflows[start_index:]:
+                    for i, cash_flow_req in cash_flows.iterrows():
+                        if cash_flow.date() <= ql.Date(cash_flow_req['dates'].day, cash_flow_req['dates'].month, cash_flow_req['dates'].year):
+                            bond.Matched_Cash_Flows[i] += cash_flow.amount()
+                            break # want to match each cash flow to the earliest cash flow requirement, and not duplicate cash flow after
+                        
+            return bond_data
