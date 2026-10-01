@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: dedicated-portfolio-calculator
+Version: 0.1.0
+Summary: Minimum-cost dedicated Treasury portfolio calculator
+Requires-Python: >=3.11
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: scipy
+Requires-Dist: QuantLib-Python

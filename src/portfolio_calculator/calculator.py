@@ -6,7 +6,8 @@ This module contains the Calculator class, which performs the optimization for a
 
 import pandas as pd
 import QuantLib as ql
-from scipy.optimize import linprog
+from scipy.optimize import milp, LinearConstraint
+import numpy as np
 
 class Calculator:
     def __init__(self, settlement_date, bond_prices, cash_flows):
@@ -29,11 +30,35 @@ class Calculator:
                 - 'CUSIP': the CUSIPs of the bonds in the optimal portfolio.
                 - 'Principal': the principal amounts of these bonds.
         """
-        clean_bond_price_data = self.__clean_bond_price_date()
+        clean_bond_price_data = self.__clean_bond_price_data()
 
         bond_data_with_dirty_prices = self.__calculate_dirty_bond_prices(clean_bond_price_data)
 
         bond_data_with_matched_cash_flows = self.__find_and_match_cash_flows(bond_data_with_dirty_prices)
+
+        # assemble A matrix of cash flows matched to each cash flow requirement
+        A = np.array(bond_data_with_matched_cash_flows['Matched_Cash_Flows'].tolist()).T
+        # append submatrix representing rolling surplus cash flow
+        m, n = A.shape 
+        A = np.hstack([A, -np.eye(m) + np.diag(np.ones(m - 1), k=-1)])
+
+        # assemble b vector of cash flow requirements
+        b = np.array(self.__clean_cash_flow_data()['cfs'].tolist())
+
+        # assemble c vector of dirty prices (minimizing total cost to purchase bonds)
+        c = np.array(bond_data_with_matched_cash_flows['Dirty_Price'].tolist() + [0] * m)
+
+        # solve linear program
+        # uses milp instead of linprog to better handle integer constraint on bond amounts
+        constraints = LinearConstraint(A, b, b) # use b for lower and upper for equality constraint
+        integrality = np.concatenate([np.ones(n), np.zeros(m)]) # all bond amounts must be integers
+        res = milp(c, constraints=constraints, integrality=integrality)
+
+        if res.success:
+            output = self.__build_output_dataframe(res.x[:n], bond_data_with_matched_cash_flows)
+            return output
+        else:
+            return None
 
     def __clean_bond_price_data(self):
         """
@@ -45,16 +70,18 @@ class Calculator:
         """
         bond_prices = self.bond_prices.copy()
 
-        bond_prices.columns = ['CUSIP', 'Security_Type', 'Rate', 'Maturity_Date', 'Call_Date', 'Buy', 'Sell']
+        bond_prices.columns = ['CUSIP', 'Security_Type', 'Rate', 'Maturity_Date', 'Call_Date', 'Buy', 'Sell', 'End_of_Day']
 
-        # call date is always blank for Treasuries, calculator does not need sell price
-        bond_prices = bond_prices.drop(columns=['Call_Date', 'Sell'])
+        # call date is always blank for Treasuries, calculator does not need sell price or end of day
+        bond_prices = bond_prices.drop(columns=['Call_Date', 'Sell', 'End_of_Day'])
 
         # filter to desired security types
         filtered_bond_prices = bond_prices.query(
             'Security_Type in ["MARKET BASED BILL", "MARKET BASED NOTE", "MARKET BASED BOND"] and Buy != 0'
         )
-        return filtered_bond_prices.dropna()
+
+        filtered_bond_prices['Maturity_Date'] = pd.to_datetime(filtered_bond_prices['Maturity_Date'], errors='coerce')
+        return filtered_bond_prices.dropna().reset_index(drop=True)
 
 
     def __clean_cash_flow_data(self):
@@ -67,6 +94,7 @@ class Calculator:
         cash_flows = self.cash_flows.copy()
 
         cash_flows.columns = ['dates', 'cfs']
+        cash_flows['dates'] = pd.to_datetime(cash_flows['dates'], errors='coerce')
 
         # filter to cash flow dates after settlement date only, 
         # not possible to satisfy cash flow requirements before settlement date
@@ -90,7 +118,7 @@ class Calculator:
         
         for bond in clean_bond_prices.itertuples():
             if bond.Security_Type == "MARKET BASED BILL":
-                dirty_prices.append(bond['Buy'])
+                dirty_prices.append(bond.Buy)
                 continue
 
             clean_price = bond.Buy
@@ -99,7 +127,7 @@ class Calculator:
 
             schedule = ql.Schedule(ql_settlement_date - ql.Period(ql.Semiannual), ql_maturity_date, ql.Period(ql.Semiannual), ql.NullCalendar(), 
                                    ql.Unadjusted, ql.Unadjusted, ql.DateGeneration.Backward, 
-                                   ql.date.isEndOfMonth(ql_maturity_date))
+                                   ql.Date.isEndOfMonth(ql_maturity_date))
 
             rate = bond.Rate
 
@@ -125,13 +153,13 @@ class Calculator:
 
         num_cf_reqs = cash_flows.shape[0]
 
-        bond_data['Matched_Cash_Flows'] = [0] * num_cf_reqs
+        bond_data['Matched_Cash_Flows'] = [[0] * num_cf_reqs for _ in range(bond_data.shape[0])]
 
         for bond in bond_data.itertuples():
             if bond.Security_Type == "MARKET BASED BILL":
                 for i, cash_flow_req in cash_flows.iterrows():
                     if bond.Maturity_Date <= cash_flow_req['dates']:
-                        bond.Matched_Cash_Flows[i] = bond.Dirty_Price
+                        bond.Matched_Cash_Flows[i] = 100
                         break
             else:
                 ql_maturity_date = ql.Date(bond.Maturity_Date.day, bond.Maturity_Date.month, bond.Maturity_Date.year)
@@ -144,7 +172,7 @@ class Calculator:
                                        ql.Period(ql.Semiannual), 
                                        calendar, 
                                        ql.Unadjusted, ql.Unadjusted, ql.DateGeneration.Backward, 
-                                       ql.date.isEndOfMonth(ql_maturity_date))
+                                       ql.Date.isEndOfMonth(ql_maturity_date))
 
                 rate = bond.Rate
 
@@ -166,5 +194,23 @@ class Calculator:
                         if cash_flow.date() <= ql.Date(cash_flow_req['dates'].day, cash_flow_req['dates'].month, cash_flow_req['dates'].year):
                             bond.Matched_Cash_Flows[i] += cash_flow.amount()
                             break # want to match each cash flow to the earliest cash flow requirement, and not duplicate cash flow after
-                        
-            return bond_data
+
+        return bond_data
+        
+
+    def __build_output_dataframe(self, bond_amounts, bond_data_with_matched_cash_flows):
+        """
+        Private method for building the output DataFrame. This method is called by construct_portfolio().
+        
+        Returns:
+            output (pd.DataFrame)
+                DataFrame with two columns:
+                - 'CUSIP': the CUSIPs of the bonds in the optimal portfolio.
+                - 'Principal': the principal amounts of these bonds.
+        """
+        output = pd.DataFrame({
+            'CUSIP': bond_data_with_matched_cash_flows['CUSIP'],
+            'Principal': bond_amounts
+        })
+
+        return output[output['Principal'] > 0]
