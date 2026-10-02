@@ -57,7 +57,14 @@ def main():
                     print("Error parsing cash flow dates. Please ensure the 'dates' column contains dates of a valid format.")
                     cash_flows_input = input("Specify cash flows path (csv): ")
 
-            output_path = input("Specify output path (csv): ")
+            output_path_parsed = False
+
+            while not output_path_parsed:
+                output_path = input("Specify output path (csv): ")
+                if output_path.endswith('.csv'):
+                    output_path_parsed = True
+                else:
+                    print("Output path must end with .csv. Please re-enter the output path.")
 
             calculator = Calculator(settlement_date, bond_prices, cash_flows)
 

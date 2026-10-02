@@ -94,15 +94,16 @@ class Calculator:
             cleaned_cash_flows (pd.DataFrame)
         """
         cash_flows = self.cash_flows.copy()
-
         cash_flows.columns = ['dates', 'cfs']
         cash_flows['dates'] = pd.to_datetime(cash_flows['dates'], errors='coerce')
+
+        cash_flows = cash_flows.dropna()
 
         # filter to cash flow dates after settlement date only, 
         # not possible to satisfy cash flow requirements before settlement date
         filtered_cash_flows = cash_flows.query('dates >= @self.settlement_date')
 
-        return filtered_cash_flows.dropna()
+        return filtered_cash_flows.sort_values(by='dates').reset_index(drop=True)
 
 
     def __calculate_dirty_bond_prices(self, clean_bond_prices):
@@ -213,7 +214,7 @@ class Calculator:
         """
         output = pd.DataFrame({
             'CUSIP': bond_data_with_matched_cash_flows['CUSIP'],
-            'Principal': bond_amounts
+            'Principal': np.round(bond_amounts) * 100
         })
 
         return output[output['Principal'] > 0]

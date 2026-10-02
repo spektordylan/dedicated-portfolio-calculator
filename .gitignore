@@ -1,4 +1,4 @@
 /data
 .venv
 /output
-**/__pycache__/
+/src/portfolio_calculator/__pycache__/*
