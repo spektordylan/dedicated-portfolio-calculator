@@ -1,7 +1,7 @@
 """
 calculator.py
 
-This module contains the Calculator class, which performs the optimization for a given portfolio.
+This module contains the Calculator class, which constructs the desired portfolio.
 """
 
 import pandas as pd
@@ -56,9 +56,11 @@ class Calculator:
 
         if res.success:
             output = self.__build_output_dataframe(res.x[:n], bond_data_with_matched_cash_flows)
+            print(f'Total cost: {res.fun}')
             return output
         else:
             return None
+
 
     def __clean_bond_price_data(self):
         """
@@ -137,6 +139,7 @@ class Calculator:
             dirty_prices.append(accrued_interest + clean_price)
 
         return clean_bond_prices.assign(Dirty_Price=dirty_prices)
+
 
     def __find_and_match_cash_flows(self, bond_data_with_dirty_prices):
         """
