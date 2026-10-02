@@ -40,13 +40,7 @@ This installs NumPy, pandas, SciPy, and QuantLib.
 
 ### Run
 
-Start the calculator from the repository root:
-
-```bash
-python -m portfolio_calculator.main
-```
-
-or use the installed command:
+Start the calculator from the repository root using the installed command:
 
 ```bash
 portfolio-calculator
