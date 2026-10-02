@@ -83,6 +83,8 @@ class Calculator:
         )
 
         filtered_bond_prices['Maturity_Date'] = pd.to_datetime(filtered_bond_prices['Maturity_Date'], errors='coerce')
+        filtered_bond_prices = filtered_bond_prices[filtered_bond_prices['Maturity_Date'] > self.settlement_date]
+        
         return filtered_bond_prices.dropna().reset_index(drop=True)
 
 
